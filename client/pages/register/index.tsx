@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Link } from "@heroui/link";
 import { Input } from "@heroui/input";
-import { button as buttonStyles, input as inputStyles } from "@heroui/theme";
+import { button as buttonStyles } from "@heroui/theme";
+
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
 
@@ -30,14 +30,14 @@ export default function Register() {
 
         if (!isValidNickname(nickname)) {
             setNicknameError(
-                "Nickname must be at least 3 characters and can only contain letters and numbers."
+                "Nickname must be at least 3 characters and can only contain letters and numbers.",
             );
             isValid = false;
         }
 
         if (!isValidPassword(password)) {
             setPasswordError(
-                "Password must be at least 6 characters and include a letter and a number."
+                "Password must be at least 6 characters and include a letter and a number.",
             );
             isValid = false;
         }
@@ -50,26 +50,26 @@ export default function Register() {
             const apiBaseUrl = process.env.NEXT_PUBLIC_BTAKIP_API_BASE_URL;
             const registerEndpoint = `${apiBaseUrl}/register`;
 
-            const response = await fetch(
-                registerEndpoint,
-                {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ email, nickname, password }),
-                }
-            );
+            const response = await fetch(registerEndpoint, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ email, nickname, password }),
+            });
 
             if (response.ok) {
                 console.log("Registration successful!");
                 <div className="inline-block max-w-xl text-center justify-center">
                     <span className={title({ color: "blue" })}>Sign Up Successful</span>
-                </div>
+                </div>;
             } else {
                 const errorData = await response.json();
+
                 console.error("Registration failed:", errorData);
-                setRegistrationError(errorData.message || "Registration failed. Please try again.");
+                setRegistrationError(
+                    errorData.message || "Registration failed. Please try again.",
+                );
             }
         } catch (error) {
             console.error("Error during registration:", error);
@@ -79,6 +79,7 @@ export default function Register() {
 
     const isValidEmail = (email: string) => {
         const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
         return emailRegex.test(email);
     };
 
@@ -87,6 +88,7 @@ export default function Register() {
             return false;
         }
         const nicknameRegex = /^[a-zA-Z0-9]+$/; // Only letters and numbers
+
         return nicknameRegex.test(nickname);
     };
 
@@ -96,9 +98,9 @@ export default function Register() {
         }
         const letterRegex = /[a-zA-Z]/;
         const numberRegex = /[0-9]/;
+
         return letterRegex.test(password) && numberRegex.test(password);
     };
-
 
     return (
         <DefaultLayout>
@@ -109,49 +111,49 @@ export default function Register() {
                 </div>
 
                 <form
-                    onSubmit={handleSubmit}
                     className="flex flex-col w-full max-w-sm gap-4"
+                    onSubmit={handleSubmit}
                 >
                     <div className="flex w-full flex-wrap md:flex-nowrap gap-4">
                         <Input
+                            errorMessage={emailError}
+                            isInvalid={!!emailError}
                             label="Email"
                             type="email"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
-                            errorMessage={emailError}
-                            isInvalid={!!emailError}
                         />
                     </div>
 
                     <div className="flex w-full flex-wrap md:flex-nowrap gap-4">
                         <Input
+                            errorMessage={nicknameError}
+                            isInvalid={!!nicknameError}
                             label="Nickname"
                             type="text"
                             value={nickname}
                             onChange={(e) => setNickname(e.target.value)}
-                            errorMessage={nicknameError}
-                            isInvalid={!!nicknameError}
                         />
                     </div>
                     <div className="flex w-full flex-wrap md:flex-nowrap gap-4">
                         <Input
+                            errorMessage={passwordError}
+                            isInvalid={!!passwordError}
                             label="Password"
                             type="password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                            errorMessage={passwordError}
-                            isInvalid={!!passwordError}
                         />
                     </div>
 
                     <button
-                        type="submit"
                         className={buttonStyles({
                             color: "primary",
                             radius: "full",
                             variant: "shadow",
                             className: "w-full", // Make button full width
                         })}
+                        type="submit"
                     >
                         Sign Up
                     </button>

@@ -1,4 +1,4 @@
 # enviroment
 venv/
 .editorconfig
-
+.env
