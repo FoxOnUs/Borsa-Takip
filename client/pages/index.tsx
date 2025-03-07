@@ -4,16 +4,59 @@ import { Input } from "@heroui/input";
 import { button as buttonStyles, input as inputStyles } from "@heroui/theme";
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
+import { useRouter } from 'next/router';
 
 export default function SignInPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, enterEmail] = useState("");
+  const [password, enterPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const router = useRouter();
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    // Sign In Logic
-    console.log("Sign In Form Submitted", { email, password });
-    // Backend Check
+
+    setLoginError("");
+
+    try {
+      const apiBaseUrl = process.env.NEXT_PUBLIC_BTAKIP_API_BASE_URL;
+      const loginEndpoint = `${apiBaseUrl}/login`;
+
+      const response = await fetch(
+        loginEndpoint,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email, password }),
+        }
+      );
+
+      if (response.ok) {
+        // success
+        const userData = await response.json();
+        router.push('/stock_charts');
+        // redirect to stock charts or settings
+      }
+      else if (response.status === 401) {
+        setLoginError("Invalid email or password. Please try again.");
+        console.error("Login failed: Invalid credentials");
+      }
+      else if (response.status === 400) {
+        const errorData = await response.json();
+        setLoginError(errorData.message || "Login failed. Please check your email/password.");
+        console.error("Login failed: Bad Request", errorData);
+      }
+      else {
+        const errorData = await response.json();
+        console.error("Login failed:", response.status, errorData);
+        setLoginError("Login failed. Please try again later.");
+      }
+    }
+    catch (error) {
+      console.error("Error during login:", error);
+      setLoginError("Network error. Please try again later.");
+    }
   };
 
   return (
@@ -28,12 +71,25 @@ export default function SignInPage() {
           onSubmit={handleSubmit}
           className="flex flex-col w-full max-w-sm gap-4"
         >
+          {loginError && (
+            <div className="text-red-500 mb-2">{loginError}</div>
+          )}
           <div className="flex w-full flex-wrap md:flex-nowrap gap-4">
-            <Input label="Email" type="email" />
+            <Input
+              label="Email"
+              type="email"
+              value={email}
+              onChange={(e) => enterEmail(e.target.value)}
+            />
           </div>
 
           <div className="flex w-full flex-wrap md:flex-nowrap gap-4">
-            <Input label="Password" type="password" />
+            <Input
+              label="Password"
+              type="password"
+              value={password}
+              onChange={(e) => enterPassword(e.target.value)}
+            />
           </div>
 
           <button
@@ -50,7 +106,7 @@ export default function SignInPage() {
         </form>
 
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          Don't have an account?
+          Don&apos;t have an account?
           <Link href="/register" className="ml-1 text-primary-500">
             Sign up
           </Link>

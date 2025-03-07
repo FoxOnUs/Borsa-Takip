@@ -16,10 +16,10 @@ from datetime import datetime
 #create_database() # 1 time run
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000"])
+CORS(app, origins=[os.environ.get("FRONT_ORIGINS")])
 
 # --- Alpha Vantage Configuration ---
-ALPHA_VANTAGE_API_KEY = "SSS1HHVV24YRZDHC"
+ALPHA_VANTAGE_API_KEY = os.environ.get("ALPHA_VANTAGE_SSH")
 if not ALPHA_VANTAGE_API_KEY:
     raise ValueError("ALPHA_VANTAGE_API_KEY environment variable not set")
 ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query"
@@ -64,6 +64,8 @@ def fetch_stock_data_from_alpha_vantage(symbol, interval='1min'):
         return {"error": f"JSON decoding failed: {str(e)}"}
     except Exception as e:
         return {"error": f"Unexpected error: {str(e)}"}
+    
+# TO DO ------ Daily --- 
 
 
 @app.route("/stock/<symbol>", methods=["GET"])

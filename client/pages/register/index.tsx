@@ -4,6 +4,7 @@ import { button as buttonStyles } from "@heroui/theme";
 
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
+import { useRouter } from 'next/router';
 
 export default function Register() {
     const [email, setEmail] = useState("");
