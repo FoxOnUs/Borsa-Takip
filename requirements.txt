@@ -1,0 +1,6 @@
+requests: 21.2.4
+SQLAlchemy: 2.0.38
+flask_cors
+flask
+bcrypt
+dotenv
