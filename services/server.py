@@ -25,16 +25,49 @@ if not ALPHA_VANTAGE_API_KEY:
 ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query"
 
 
-# ---INTRADAY---
+# -----POLLING------
 
-def fetch_stock_data_from_alpha_vantage(symbol, interval='1min'): 
-    function = "TIME_SERIES_INTRADAY"
-    params = {
-        "function": function,
-        "symbol": symbol,
-        "interval": interval, 
-        "apikey": ALPHA_VANTAGE_API_KEY
-    }
+SERVICE_STOCK_LIST_FILE = os.environ.get("STOCK_LIST_PATH")
+app.config['POLLING_INTERVAL_SECONDS'] = os.environ.get("POLLING_INTERVAL_SECONDS")
+
+def read_stock_list_from_file(filepath):
+    try:
+        with open(filepath, 'r') as file:
+            json_string = file.read()
+            stock_ticker_list = json.loads(json_string)
+            return stock_ticker_list
+    except FileNotFoundError:
+        print(f"Error: File not found at path: {filepath}")
+        return None
+    except json.JSONDecodeError:
+        print(f"Error: Could not decode JSON from file: {filepath}.  Please ensure it's valid JSON.")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred while reading stock list file: {e}")
+        return None
+    
+# ---INTRADAY&DAILY---
+def fetch_stock_data_from_alpha_vantage(symbol, data_type='intraday', interval='1min'):
+    if data_type == 'intraday':
+        function = "TIME_SERIES_INTRADAY"
+        time_series_key_prefix = 'Time Series'
+        params = {
+            "function": function,
+            "symbol": symbol,
+            "interval": interval,
+            "apikey": ALPHA_VANTAGE_API_KEY
+        }
+        interval_key = f'({interval})' # e.g. "(1min)"
+
+    elif data_type == 'daily':
+        function = "TIME_SERIES_DAILY"
+        time_series_key_prefix = 'Time Series' 
+        params = {
+            "function": function,
+            "symbol": symbol,
+            "apikey": ALPHA_VANTAGE_API_KEY
+        }
+        interval_key = '(Daily)' # Key is "(Daily)" 
     try:
         response = requests.get(ALPHA_VANTAGE_BASE_URL, params=params)
         response.raise_for_status()
@@ -46,7 +79,7 @@ def fetch_stock_data_from_alpha_vantage(symbol, interval='1min'):
         if not data.get(time_series_key):
             return {"error": f"No intraday time series data found for symbol or invalid interval: {interval}"}
 
-        intraday_data = data[time_series_key]
+        time_series_data = data[time_series_key]
         stock_data = []
         for datetime_str, values in intraday_data.items():
             stock_data.append({
@@ -57,7 +90,10 @@ def fetch_stock_data_from_alpha_vantage(symbol, interval='1min'):
                 "close": float(values['4. close']),
                 "volume": int(values['5. volume'])
             })
-        return {"symbol": symbol, "interval": interval, "intraday_prices": stock_data} 
+        if data_type == 'intraday':
+            return {"symbol": symbol, "interval": interval, "intraday_prices": stock_data}
+        elif data_type == 'daily':
+            return {"symbol": symbol, "daily_prices": stock_data}
     except requests.exceptions.RequestException as e:
         return {"error": f"API request failed: {str(e)}"}
     except ValueError as e:
@@ -65,14 +101,38 @@ def fetch_stock_data_from_alpha_vantage(symbol, interval='1min'):
     except Exception as e:
         return {"error": f"Unexpected error: {str(e)}"}
     
-# TO DO ------ Daily --- 
+# ----- Main Polling -----
+def main_polling_loop():
+    while True:
+        start.time = time.time()
 
+        stock_symbols=read_stock_list_from_file(SERVICE_STOCK_LIST_FILE)
+        if not stock_symbols:
+            app.logger.error("Failed to load stock symbols from file. Please check the file and path.")
+            time.sleep(POLLING_INTERVAL_SECONDS) # Wait before retrying
+            continue # Pass to next loop if doesn't exist
+        for symbol in stock_symbols:
+            app.logger.info(f"Fetching data for: {symbol}...") 
+            stock_data_result = fetch_stock_data_from_alpha_vantage(symbol)
+
+            if "error" in stock_data_result:
+                app.logger.error(f"  Error fetching data for {symbol}: {stock_data_result['error']}") 
+            else:
+                app.logger.info(f"  Successfully fetched {len(stock_data_result['intraday_prices'])} data points for {symbol} ({stock_data_result['interval']}).") 
+
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        wait_time = max(0, app.config['POLLING_INTERVAL_SECONDS'] - elapsed_time) 
+
+        app.logger.info(f"--- Data fetching cycle completed in {elapsed_time:.2f} seconds. Waiting for {wait_time:.2f} seconds until next poll. ---") 
+        time.sleep(wait_time)
 
 @app.route("/stock/<symbol>", methods=["GET"])
 def get_stock_price(symbol):
-    """API endpoint to get intraday stock data for a given symbol."""
+    """API endpoint to get daily stock data for a given symbol.""" # intraday should be the polling one
     interval = request.args.get('interval', '1min') 
-    stock_data_result = fetch_stock_data_from_alpha_vantage(symbol, interval=interval) 
+    data_type='daily'
+    stock_data_result = fetch_stock_data_from_alpha_vantage(symbol,data_type, interval=interval) 
     if "error" in stock_data_result:
         status_code = 400 if stock_data_result["error"].startswith("Alpha Vantage API Error") else 500
         return jsonify({"message": stock_data_result["error"]}), status_code
@@ -196,4 +256,11 @@ def update_user_favorite_stocks(user_id: int):
         return jsonify({"message": "Failed to update favorite stocks", "error": str(e)}), 500
 
 if __name__ == "__main__":
+
+    # Threading for polling
+    import threading
+    polling_thread = threading.Thread(target=main_polling_loop)
+    polling_thread.daemon = True
+    polling_thread.start()
+
     app.run(debug=True)

@@ -21,6 +21,7 @@
     "@heroui/system": "2.4.10",
     "@heroui/theme": "2.4.9",
     "@react-aria/visually-hidden": "3.8.19",
+    "apexcharts": "^4.5.0",
     "clsx": "2.1.1",
     "dotenv": "^16.4.7",
     "framer-motion": "11.13.1",
