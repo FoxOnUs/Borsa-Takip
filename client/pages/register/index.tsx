@@ -4,7 +4,7 @@ import { button as buttonStyles } from "@heroui/theme";
 
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
-import { useRouter } from 'next/router';
+import { useRouter } from "next/router";
 
 export default function Register() {
     const [email, setEmail] = useState("");
@@ -14,6 +14,7 @@ export default function Register() {
     const [emailError, setEmailError] = useState("");
     const [nicknameError, setNicknameError] = useState("");
     const [passwordError, setPasswordError] = useState("");
+    const router = useRouter();
 
     const handleSubmit = async (event: React.FormEvent) => {
         event.preventDefault();
@@ -56,14 +57,17 @@ export default function Register() {
                 headers: {
                     "Content-Type": "application/json",
                 },
-                body: JSON.stringify({ email, nickname, password }),
+                body: JSON.stringify({ nickname, email, password }),
             });
 
             if (response.ok) {
+                const responseData = await response.json();
                 console.log("Registration successful!");
-                <div className="inline-block max-w-xl text-center justify-center">
-                    <span className={title({ color: "blue" })}>Sign Up Successful</span>
-                </div>;
+
+                localStorage.setItem('userId', responseData.user_id.toString());
+                localStorage.setItem("userNickname", nickname);
+                localStorage.setItem("userEmail", email);
+                router.push("/profile");
             } else {
                 const errorData = await response.json();
 

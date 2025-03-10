@@ -9,8 +9,8 @@ export const siteConfig = {
       href: "/",
     },
     {
-      label: "Stock Chart",
-      href: "/stock_chart",
+      label: "Stock Charts",
+      href: "/stock_charts",
     },
   ],
   navMenuItems: [

@@ -33,10 +33,13 @@ export default function SignInPage() {
       );
 
       if (response.ok) {
-        // success
-        const userData = await response.json();
-        router.push('/stock_charts');
-        // redirect to stock charts or settings
+        const responseData = await response.json();
+        console.log("Registration successful!");
+
+        localStorage.setItem('userId', responseData.user_id.toString());
+        localStorage.setItem("userNickname", responseData.nickname.toString());
+        localStorage.setItem("userEmail", responseData.email.toString());
+        router.push("/profile");
       }
       else if (response.status === 401) {
         setLoginError("Invalid email or password. Please try again.");

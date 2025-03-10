@@ -5,7 +5,7 @@ import os
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from flask import Flask, request, jsonify 
+from flask import Flask, json, request, jsonify 
 from flask_cors import CORS
 from sqlalchemy.orm import Session
 from db.database import get_db, create_database
@@ -18,14 +18,11 @@ from datetime import datetime
 app = Flask(__name__)
 CORS(app, origins=[os.environ.get("FRONT_ORIGINS")])
 
-# --- Alpha Vantage Configuration ---
+"""# --- Alpha Vantage Configuration ---
 ALPHA_VANTAGE_API_KEY = os.environ.get("ALPHA_VANTAGE_SSH")
 if not ALPHA_VANTAGE_API_KEY:
     raise ValueError("ALPHA_VANTAGE_API_KEY environment variable not set")
-ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query"
-
-
-# -----POLLING------
+ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query" """
 
 SERVICE_STOCK_LIST_FILE = os.environ.get("STOCK_LIST_PATH")
 app.config['POLLING_INTERVAL_SECONDS'] = os.environ.get("POLLING_INTERVAL_SECONDS")
@@ -55,7 +52,8 @@ def fetch_stock_data_from_alpha_vantage(symbol, data_type='intraday', interval='
             "function": function,
             "symbol": symbol,
             "interval": interval,
-            "apikey": ALPHA_VANTAGE_API_KEY
+            "apikey": ALPHA_VANTAGE_API_KEY,
+            "outputsize":"Compact",
         }
         interval_key = f'({interval})' # e.g. "(1min)"
 
@@ -65,23 +63,26 @@ def fetch_stock_data_from_alpha_vantage(symbol, data_type='intraday', interval='
         params = {
             "function": function,
             "symbol": symbol,
-            "apikey": ALPHA_VANTAGE_API_KEY
+            "apikey": ALPHA_VANTAGE_API_KEY,
+            "outputsize":"Compact",
         }
         interval_key = '(Daily)' # Key is "(Daily)" 
     try:
         response = requests.get(ALPHA_VANTAGE_BASE_URL, params=params)
         response.raise_for_status()
         data = response.json()
-
+        """
+        Have to change the alpha vantage to Yahoo Finance for not rate limit"""
         if 'Error Message' in data:
             return {"error": f"Alpha Vantage API Error: {data['Error Message']}"}
-        time_series_key = f'Time Series ({interval})'
+        time_series_key = f'Time Series {interval_key}'
+        print("TIME SERIES",time_series_key)
         if not data.get(time_series_key):
             return {"error": f"No intraday time series data found for symbol or invalid interval: {interval}"}
 
         time_series_data = data[time_series_key]
         stock_data = []
-        for datetime_str, values in intraday_data.items():
+        for datetime_str, values in time_series_data.items():
             stock_data.append({
                 "datetime": datetime_str, 
                 "open": float(values['1. open']),
@@ -100,7 +101,8 @@ def fetch_stock_data_from_alpha_vantage(symbol, data_type='intraday', interval='
         return {"error": f"JSON decoding failed: {str(e)}"}
     except Exception as e:
         return {"error": f"Unexpected error: {str(e)}"}
-    
+
+"""    
 # ----- Main Polling -----
 def main_polling_loop():
     while True:
@@ -126,13 +128,13 @@ def main_polling_loop():
 
         app.logger.info(f"--- Data fetching cycle completed in {elapsed_time:.2f} seconds. Waiting for {wait_time:.2f} seconds until next poll. ---") 
         time.sleep(wait_time)
-
+"""
 @app.route("/stock/<symbol>", methods=["GET"])
 def get_stock_price(symbol):
-    """API endpoint to get daily stock data for a given symbol.""" # intraday should be the polling one
+    """API endpoint to get daily stock data for a given symbol.""" # intraday should be the polling one - not yet
     interval = request.args.get('interval', '1min') 
-    data_type='daily'
-    stock_data_result = fetch_stock_data_from_alpha_vantage(symbol,data_type, interval=interval) 
+    data_type= request.args.get('data_type')
+    stock_data_result = fetch_stock_data_from_alpha_vantage(symbol,data_type=data_type, interval=interval) 
     if "error" in stock_data_result:
         status_code = 400 if stock_data_result["error"].startswith("Alpha Vantage API Error") else 500
         return jsonify({"message": stock_data_result["error"]}), status_code
@@ -227,6 +229,14 @@ def update_user_password(user_id: int):
         next(db_gen, None)
         return jsonify({"message": "Failed to update password", "error": str(e)}), 500
 
+@app.route('/api/stock_symbols', methods=['GET'])
+def get_stock_symbols():
+    stock_symbols = read_stock_list_from_file(SERVICE_STOCK_LIST_FILE)
+    if stock_symbols:
+        return jsonify(stock_symbols) 
+    else:
+        return jsonify({"error": "Could not retrieve stock symbols"}), 500 
+
 @app.route("/users/<int:user_id>/favorite_stocks", methods=["PUT"])
 def update_user_favorite_stocks(user_id: int):
      
@@ -257,10 +267,11 @@ def update_user_favorite_stocks(user_id: int):
 
 if __name__ == "__main__":
 
+    """
     # Threading for polling
     import threading
     polling_thread = threading.Thread(target=main_polling_loop)
     polling_thread.daemon = True
     polling_thread.start()
-
+    """
     app.run(debug=True)

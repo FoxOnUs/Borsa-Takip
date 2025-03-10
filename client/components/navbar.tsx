@@ -21,6 +21,7 @@ import {
   GithubIcon,
   SearchIcon,
 } from "@/components/icons";
+import { useEffect, useState } from "react";
 
 export const Navbar = () => {
   const searchInput = (
@@ -44,6 +45,24 @@ export const Navbar = () => {
     />
   );
 
+  const [navItems, setNavItems] = useState(siteConfig.navItems);
+
+  useEffect(() => {
+    const userNickname = localStorage.getItem('userNickname');
+    const updatedNavItems = navItems.map(item => {
+      if (item.label === 'Home') { // Change the Home to profile if the user logged in
+        return {
+          ...item,
+          label: userNickname ? 'Profile' : 'Home', // Conditionally set label and href
+          href: userNickname ? '/profile' : '/'
+        };
+      }
+      return item;
+    });
+    setNavItems(updatedNavItems);
+  }, []);
+
+  /* TODO Search stocks */
   return (
     <HeroUINavbar maxWidth="xl" position="sticky">
       <NavbarContent className="basis-1/5 sm:basis-full" justify="start">
@@ -69,6 +88,7 @@ export const Navbar = () => {
         className="hidden sm:flex basis-1/5 sm:basis-full"
         justify="end"
       >
+
         <NavbarItem className="hidden lg:flex">{searchInput}</NavbarItem>
       </NavbarContent>
       <NavbarMenu>
