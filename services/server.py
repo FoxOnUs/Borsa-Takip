@@ -10,19 +10,12 @@ from flask_cors import CORS
 from sqlalchemy.orm import Session
 from db.database import get_db, create_database
 from services import crud
-import requests
-from datetime import datetime
+import yfinance
 
 #create_database() # 1 time run
 
 app = Flask(__name__)
 CORS(app, origins=[os.environ.get("FRONT_ORIGINS")])
-
-"""# --- Alpha Vantage Configuration ---
-ALPHA_VANTAGE_API_KEY = os.environ.get("ALPHA_VANTAGE_SSH")
-if not ALPHA_VANTAGE_API_KEY:
-    raise ValueError("ALPHA_VANTAGE_API_KEY environment variable not set")
-ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query" """
 
 SERVICE_STOCK_LIST_FILE = os.environ.get("STOCK_LIST_PATH")
 app.config['POLLING_INTERVAL_SECONDS'] = os.environ.get("POLLING_INTERVAL_SECONDS")
@@ -43,103 +36,87 @@ def read_stock_list_from_file(filepath):
         print(f"An unexpected error occurred while reading stock list file: {e}")
         return None
     
-# ---INTRADAY&DAILY---
-def fetch_stock_data_from_alpha_vantage(symbol, data_type='intraday', interval='1min'):
-    if data_type == 'intraday':
-        function = "TIME_SERIES_INTRADAY"
-        time_series_key_prefix = 'Time Series'
-        params = {
-            "function": function,
-            "symbol": symbol,
-            "interval": interval,
-            "apikey": ALPHA_VANTAGE_API_KEY,
-            "outputsize":"Compact",
-        }
-        interval_key = f'({interval})' # e.g. "(1min)"
 
-    elif data_type == 'daily':
-        function = "TIME_SERIES_DAILY"
-        time_series_key_prefix = 'Time Series' 
-        params = {
-            "function": function,
-            "symbol": symbol,
-            "apikey": ALPHA_VANTAGE_API_KEY,
-            "outputsize":"Compact",
-        }
-        interval_key = '(Daily)' # Key is "(Daily)" 
-    try:
-        response = requests.get(ALPHA_VANTAGE_BASE_URL, params=params)
-        response.raise_for_status()
-        data = response.json()
-        """
-        Have to change the alpha vantage to Yahoo Finance for not rate limit"""
-        if 'Error Message' in data:
-            return {"error": f"Alpha Vantage API Error: {data['Error Message']}"}
-        time_series_key = f'Time Series {interval_key}'
-        print("TIME SERIES",time_series_key)
-        if not data.get(time_series_key):
-            return {"error": f"No intraday time series data found for symbol or invalid interval: {interval}"}
-
-        time_series_data = data[time_series_key]
-        stock_data = []
-        for datetime_str, values in time_series_data.items():
-            stock_data.append({
-                "datetime": datetime_str, 
-                "open": float(values['1. open']),
-                "high": float(values['2. high']),
-                "low": float(values['3. low']),
-                "close": float(values['4. close']),
-                "volume": int(values['5. volume'])
-            })
-        if data_type == 'intraday':
-            return {"symbol": symbol, "interval": interval, "intraday_prices": stock_data}
-        elif data_type == 'daily':
-            return {"symbol": symbol, "daily_prices": stock_data}
-    except requests.exceptions.RequestException as e:
-        return {"error": f"API request failed: {str(e)}"}
-    except ValueError as e:
-        return {"error": f"JSON decoding failed: {str(e)}"}
-    except Exception as e:
-        return {"error": f"Unexpected error: {str(e)}"}
-
-"""    
-# ----- Main Polling -----
-def main_polling_loop():
-    while True:
-        start.time = time.time()
-
-        stock_symbols=read_stock_list_from_file(SERVICE_STOCK_LIST_FILE)
-        if not stock_symbols:
-            app.logger.error("Failed to load stock symbols from file. Please check the file and path.")
-            time.sleep(POLLING_INTERVAL_SECONDS) # Wait before retrying
-            continue # Pass to next loop if doesn't exist
-        for symbol in stock_symbols:
-            app.logger.info(f"Fetching data for: {symbol}...") 
-            stock_data_result = fetch_stock_data_from_alpha_vantage(symbol)
-
-            if "error" in stock_data_result:
-                app.logger.error(f"  Error fetching data for {symbol}: {stock_data_result['error']}") 
-            else:
-                app.logger.info(f"  Successfully fetched {len(stock_data_result['intraday_prices'])} data points for {symbol} ({stock_data_result['interval']}).") 
-
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        wait_time = max(0, app.config['POLLING_INTERVAL_SECONDS'] - elapsed_time) 
-
-        app.logger.info(f"--- Data fetching cycle completed in {elapsed_time:.2f} seconds. Waiting for {wait_time:.2f} seconds until next poll. ---") 
-        time.sleep(wait_time)
-"""
 @app.route("/stock/<symbol>", methods=["GET"])
 def get_stock_price(symbol):
-    """API endpoint to get daily stock data for a given symbol.""" # intraday should be the polling one - not yet
-    interval = request.args.get('interval', '1min') 
-    data_type= request.args.get('data_type')
-    stock_data_result = fetch_stock_data_from_alpha_vantage(symbol,data_type=data_type, interval=interval) 
-    if "error" in stock_data_result:
-        status_code = 400 if stock_data_result["error"].startswith("Alpha Vantage API Error") else 500
-        return jsonify({"message": stock_data_result["error"]}), status_code
-    return jsonify(stock_data_result), 200
-
+    """API endpoint to get daily stock data for a given symbol."""
+    interval = request.args.get('interval', '1d')
+    period = request.args.get('period', '1mo')
+    
+    try:
+        print(f"Attempting to download data for {symbol} with interval={interval}, period={period}")
+        
+        # adding a retry mechanism - sometimes(almost always if there is batch) yfinance needs a second attempt
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                stock_data = yfinance.download(
+                    tickers=symbol, 
+                    period=period, 
+                    interval=interval,
+                    progress=False  
+                )
+                
+                if not stock_data.empty:
+                    break
+                    
+                print(f"Attempt {attempt+1}: Empty data received for {symbol}. Retrying...")
+                time.sleep(1)  # wait a second before retrying
+                
+            except Exception as e:
+                print(f"Attempt {attempt+1} failed: {str(e)}")
+                if attempt == max_retries - 1:  # if this was the last attempt
+                    raise
+                time.sleep(1)  # wait before retry
+        
+        # handle empty dataframe
+        if stock_data.empty:
+            return jsonify({
+                "error": f"No data available for {symbol} with interval={interval}, period={period}"
+            }), 404
+            
+        
+        result = {}
+        
+        
+        if interval == '1d':
+            time_series_key = "Time Series (Daily)"
+        elif interval in ['1m', '5m', '15m', '30m', '60m']:
+            time_series_key = "Time Series (5min)"
+        else:
+            time_series_key = f"Time Series ({interval})"
+        
+        
+        result[time_series_key] = {}
+        
+        for index, row in stock_data.iterrows():
+            
+            date_str = index.strftime('%Y-%m-%d %H:%M:%S')
+            
+            
+            data_point = {
+                "1. open": str(row.get('Open', 0)),
+                "2. high": str(row.get('High', 0)),
+                "3. low": str(row.get('Low', 0)),
+                "4. close": str(row.get('Close', 0)),
+                "5. volume": str(row.get('Volume', 0))
+            }
+            
+            result[time_series_key][date_str] = data_point
+            
+        return jsonify(result), 200
+        
+    except Exception as e:
+        import traceback
+        error_message = str(e)
+        error_traceback = traceback.format_exc()
+        
+        print(f"Error processing {symbol}: {error_message}")
+        print(f"Traceback: {error_traceback}")
+        return jsonify({
+            "error": f"Failed to retrieve data for {symbol}: {error_message}"
+        }), 500
+    
 @app.route("/register", methods=["POST"])
 def register_user():
     db_gen = get_db()
