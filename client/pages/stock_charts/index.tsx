@@ -1,10 +1,12 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable jsx-a11y/anchor-is-valid */
 /* eslint-disable no-console */
+
 import React, { useState, useEffect } from 'react';
 import NextLink from 'next/link';
+
 import DefaultLayout from "@/layouts/default";
 import { title } from "@/components/primitives";
-import { isNull } from 'util';
 
 interface StockData {
     symbol: string;
@@ -23,13 +25,14 @@ interface StockListItem {
 }
 
 const STOCK_DATA_CACHE_KEY = 'stockDataCache';
-const CACHE_EXPIRY_TIME_MS = 1 * 60 * 1000; // 1 min
+const CACHE_EXPIRY_TIME_MS = 1 * 20 * 1000;
 
 const StockListPage: React.FC = () => {
     const [stockSymbols, setStockSymbols] = useState<string[]>([]);
     const [stockListItems, setStockListItems] = useState<StockListItem[]>([]);
     const [loading, setLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
+    const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>(null);
 
     useEffect(() => {
         fetchSymbolsAndData();
@@ -43,16 +46,39 @@ const StockListPage: React.FC = () => {
             console.log(`Fetching ${symbol} data with interval=${interval}, period=${period}`);
             const response = await fetch(`${apiBaseUrl}/stock/${symbol}?${queryString}`);
 
-            const data = await response.json();
-
             if (!response.ok) {
-                console.error(`Error fetching ${symbol}: Status ${response.status}`, data);
+                const errorText = await response.text();
+                let errorData;
+
+                try {
+                    errorData = JSON.parse(errorText);
+                } catch (e) {
+                    errorData = { error: errorText };
+                }
+
+                console.error(`Error fetching ${symbol}: Status ${response.status}`, errorData);
 
                 return {
                     symbol,
                     interval,
                     period,
-                    error: data.error || `Failed to fetch data: ${response.status} ${response.statusText}`
+                    error: errorData.error || `Failed to fetch data: ${response.status} ${response.statusText}`
+                };
+            }
+
+            const responseText = await response.text();
+            let data;
+
+            try {
+                data = JSON.parse(responseText);
+            } catch (e: any) {
+                console.error(`JSON parse error for ${symbol}:`, responseText);
+
+                return {
+                    symbol,
+                    interval,
+                    period,
+                    error: `Invalid JSON response: ${e.message}`
                 };
             }
 
@@ -78,7 +104,6 @@ const StockListPage: React.FC = () => {
         setLoading(true);
         setError(null);
 
-        // check cache first
         const cachedData = localStorage.getItem(STOCK_DATA_CACHE_KEY);
         const lastCacheTime = localStorage.getItem(`${STOCK_DATA_CACHE_KEY}_timestamp`);
 
@@ -96,7 +121,6 @@ const StockListPage: React.FC = () => {
         }
 
         try {
-            // Fetch symbols
             const apiBaseUrl = process.env.NEXT_PUBLIC_BTAKIP_API_BASE_URL;
             const symbolsResponse = await fetch(`${apiBaseUrl}/api/stock_symbols`);
 
@@ -108,27 +132,50 @@ const StockListPage: React.FC = () => {
 
             setStockSymbols(symbolsData);
 
-            const stockDataPromises = symbolsData.map(symbol => {
-                // for intraday price, use 5m interval if available, fallback to 1d
-                const intradayPromise = fetchStockData(symbol, '5m', '1d')
-                    .catch(() => fetchStockData(symbol, '1d', '1d'));
+            const stockListItemsUpdated: StockListItem[] = [];
 
-                // for recent history/comparison, use 1 week
-                const historyPromise = fetchStockData(symbol, '1d', '5d')
-                    .catch(() => fetchStockData(symbol, '1d', '1wk'));
+            for (const symbol of symbolsData) {
+                try {
+                    let intradayData: StockData;
 
-                return Promise.all([intradayPromise, historyPromise]);
-            });
+                    try {
+                        intradayData = await fetchStockData(symbol, '5m', '1d');
+                    } catch (e) {
+                        intradayData = await fetchStockData(symbol, '1d', '1d');
+                    }
 
-            const allStockDataResults = await Promise.all(stockDataPromises);
+                    let historyData: StockData;
 
-            const stockListItemsUpdated: StockListItem[] = allStockDataResults.map(
-                ([intradayData, historyData], index) => processStockData(symbolsData[index], intradayData, historyData)
-            );
+                    try {
+                        historyData = await fetchStockData(symbol, '1d', '5d');
+                    } catch (e) {
+                        historyData = await fetchStockData(symbol, '1d', '1wk');
+                    }
+
+                    if (intradayData.symbol !== symbol) {
+                        console.error(`Symbol mismatch: expected ${symbol}, got ${intradayData.symbol}`);
+                        intradayData.symbol = symbol;
+                    }
+
+                    if (historyData.symbol !== symbol) {
+                        console.error(`Symbol mismatch: expected ${symbol}, got ${historyData.symbol}`);
+                        historyData.symbol = symbol;
+                    }
+
+                    const processedItem = processStockData(symbol, intradayData, historyData);
+
+                    stockListItemsUpdated.push(processedItem);
+                } catch (err: any) {
+                    console.error(`Error processing ${symbol}:`, err);
+                    stockListItemsUpdated.push({
+                        symbol,
+                        error: `Failed to process data: ${err.message}`
+                    });
+                }
+            }
 
             setStockListItems(stockListItemsUpdated);
 
-            // update cache
             localStorage.setItem(STOCK_DATA_CACHE_KEY, JSON.stringify(stockListItemsUpdated));
             localStorage.setItem(`${STOCK_DATA_CACHE_KEY}_timestamp`, Date.now().toString());
 
@@ -140,17 +187,36 @@ const StockListPage: React.FC = () => {
         }
     };
 
-    const extractNumericValue = (value: string): number | undefined => {
-        // regex to extract the float
-        const match = value.match(/\d+\.\d+/);
+    const sortStockItems = (items: StockListItem[], order: 'asc' | 'desc'): StockListItem[] => {
+        return [...items].sort((a, b) => {
+            if (a.error && !b.error) return 1;
+            if (!a.error && b.error) return -1;
+            if (a.error && b.error) return a.symbol.localeCompare(b.symbol);
 
-        if (match) {
-            return parseFloat(match[0]);
-        }
-        return undefined;
+            if (a.percentageChange === undefined && b.percentageChange !== undefined) return 1;
+            if (a.percentageChange !== undefined && b.percentageChange === undefined) return -1;
+            if (a.percentageChange === undefined && b.percentageChange === undefined) {
+                return a.symbol.localeCompare(b.symbol);
+            }
+
+            if (order === 'desc') {
+                return (b.percentageChange as number) - (a.percentageChange as number);
+            } else {
+                return (a.percentageChange as number) - (b.percentageChange as number);
+            }
+        });
+    };
+
+    const toggleSortOrder = () => {
+        const newOrder = sortOrder === null ? 'desc' : sortOrder === 'desc' ? 'asc' : 'desc';
+
+        setSortOrder(newOrder);
+        setStockListItems(sortStockItems(stockListItems, newOrder));
     };
 
     const processStockData = (symbol: string, intradayData: StockData, historyData: StockData): StockListItem => {
+        console.log(`\n--- processStockData for symbol: ${symbol} ---`);
+
         let intradayPrice: number | undefined = undefined;
         let percentageChange: number | undefined = undefined;
         let lastDayClose: number | undefined = undefined;
@@ -161,7 +227,6 @@ const StockListPage: React.FC = () => {
             errorDetails.push(`Intraday data: ${intradayData.error}`);
         } else {
             try {
-
                 const timeSeriesKey = Object.keys(intradayData).find(key =>
                     key.startsWith("Time Series") || key.includes("Series"));
 
@@ -170,29 +235,17 @@ const StockListPage: React.FC = () => {
                     const timePoints = Object.keys(timeSeries);
 
                     if (timePoints.length > 0) {
-
                         const latestDataKey = timePoints[0];
                         const latestData = timeSeries[latestDataKey];
-
 
                         const closePrice =
                             latestData["4. close"] ||
                             latestData["close"] ||
                             latestData["Close"];
 
-                        if (closePrice) {
-                            const parsed = extractNumericValue(closePrice);
-
-                            console.log("-------closePrice intraday--------");
-                            console.log(closePrice);
-                            console.log("-------parsed intraday--------");
-                            console.log(parsed);
-                            if ((parsed) !== undefined) {
-                                intradayPrice = parsed;
-                            } else {
-                                errorDetails.push("Invalid intraday price format");
-
-                            }
+                        if (closePrice !== undefined && closePrice !== null) {
+                            console.log(`${symbol} closePrice intraday:`, closePrice);
+                            intradayPrice = closePrice;
                         } else {
                             errorDetails.push("Close price not found in intraday data");
                         }
@@ -206,7 +259,6 @@ const StockListPage: React.FC = () => {
                 errorDetails.push(`Error processing intraday data: ${err.message}`);
             }
         }
-
 
         if (historyData.error) {
             errorDetails.push(`Historical data: ${historyData.error}`);
@@ -228,14 +280,9 @@ const StockListPage: React.FC = () => {
                             previousData["close"] ||
                             previousData["Close"];
 
-                        if (closePrice) {
-                            const parsed = extractNumericValue(closePrice);
-
-                            if ((parsed) !== undefined) {
-                                lastDayClose = parsed;
-                            } else {
-                                errorDetails.push("Invalid historical price format");
-                            }
+                        if (closePrice !== undefined && closePrice !== null) {
+                            console.log(`${symbol} closePrice history:`, closePrice);
+                            lastDayClose = closePrice;
                         } else {
                             errorDetails.push("Close price not found in historical data");
                         }
@@ -254,7 +301,6 @@ const StockListPage: React.FC = () => {
             error = errorDetails.join('; ');
         }
 
-        // calculate percentage change
         if (intradayPrice !== undefined && lastDayClose !== undefined &&
             intradayPrice !== null && lastDayClose !== null) {
             percentageChange = ((intradayPrice - lastDayClose) / lastDayClose) * 100;
@@ -284,19 +330,31 @@ const StockListPage: React.FC = () => {
                     <span className={title()}>Stock Prices</span>
                 </div>
 
+                <div className="w-full max-w-md flex justify-between items-center mb-2">
+                    <span className="text-sm font-tiny">Sort:</span>
+                    <button
+                        className="px-2 py-1 bg-gray-600 rounded-md hover:bg-gray-500 flex items-center gap-1 transition-colors text-sm"
+                        onClick={toggleSortOrder}
+                    >
+                        {sortOrder === null ? 'By % Change' :
+                            sortOrder === 'desc' ? 'Highest % first' : 'Lowest % first'}
+                        {sortOrder === null ? '' : (sortOrder === 'desc' ? ' ↓' : ' ↑')}
+                    </button>
+                </div>
+
                 <ul className="w-full max-w-md divide-y divide-gray-200">
                     {stockListItems.map((item) => (
                         <li key={item.symbol} className="py-4">
-                            <NextLink href={`/stockdetails/${item.symbol}`} legacyBehavior>
+                            <NextLink legacyBehavior href={`/stockdetails/${item.symbol}`}>
                                 <a className="block">
                                     <div className="flex items-center justify-between">
-                                        <p className="text-lg font-semibold text-gray-800">{item.symbol}</p>
+                                        <p className="text-lg font-semibold text-gray-600">{item.symbol}</p>
                                         {item.error ? (
                                             <p className="text-red-500 text-sm">{item.error}</p>
                                         ) : (
                                             <div>
                                                 {item.intradayPrice !== undefined && item.intradayPrice !== null && (
-                                                    <p className="text-gray-600">${item.intradayPrice.toFixed(2)}</p>
+                                                    <p className="text-gray-500">${item.intradayPrice.toFixed(2)}</p>
                                                 )}
                                                 {item.percentageChange !== undefined && item.percentageChange !== null && (
                                                     <p className={`text-sm font-medium ${item.percentageChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
@@ -310,7 +368,7 @@ const StockListPage: React.FC = () => {
                                     {item.lastDayClose !== undefined && item.lastDayClose !== null &&
                                         item.intradayPrice !== undefined && item.intradayPrice !== null &&
                                         !item.error && (
-                                            <p className="text-gray-500 text-sm">
+                                            <p className="text-gray-400 text-sm">
                                                 vs last close: ${item.lastDayClose.toFixed(2)}
                                             </p>
                                         )}
@@ -319,6 +377,17 @@ const StockListPage: React.FC = () => {
                         </li>
                     ))}
                 </ul>
+                {sortOrder !== null && (
+                    <button
+                        className="mt-4 px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+                        onClick={() => {
+                            setSortOrder(null);
+                            fetchSymbolsAndData();
+                        }}
+                    >
+                        Reset sorting
+                    </button>
+                )}
             </section>
         </DefaultLayout>
     );

@@ -11,6 +11,10 @@ from sqlalchemy.orm import Session
 from db.database import get_db, create_database
 from services import crud
 import yfinance
+from cachetools import TTLCache
+import asyncio
+import functools
+import concurrent.futures
 
 #create_database() # 1 time run
 
@@ -21,6 +25,7 @@ SERVICE_STOCK_LIST_FILE = os.environ.get("STOCK_LIST_PATH")
 app.config['POLLING_INTERVAL_SECONDS'] = os.environ.get("POLLING_INTERVAL_SECONDS")
 
 def read_stock_list_from_file(filepath):
+    """Read the stock symbols from the json file."""
     try:
         with open(filepath, 'r') as file:
             json_string = file.read()
@@ -36,6 +41,100 @@ def read_stock_list_from_file(filepath):
         print(f"An unexpected error occurred while reading stock list file: {e}")
         return None
     
+def extract_float_from_dictionary(input_string):
+    """Function to extract float value from pd.series version of the yfinance row as string."""
+    if not isinstance(input_string, str):
+        print("Warning: Expected string input, got:", type(input_string))
+        return None
+
+    lines = input_string.splitlines()
+    if len(lines) > 1:
+        try:
+            price_str = lines[1].strip().split()[-1]
+            price_value = float(price_str)
+            return price_value
+        except (ValueError, IndexError):
+            print(f"Warning: Could not parse float from string: {input_string}")
+            return None
+    return -1
+
+stock_cache = TTLCache(maxsize=500, ttl=300)
+
+def fetch_stock_data(symbol, interval, period):
+    """Function to fetch stock data with retry logic"""
+    cache_key = f"{symbol}_{interval}_{period}"
+    
+    # return cached data if available & catching is more suitable than writing it to the database
+    if cache_key in stock_cache:
+        return stock_cache[cache_key]
+    
+    max_retries = 2
+    backoff_factor = 0.5
+    
+    for attempt in range(max_retries):
+        try:
+            stock_data = yfinance.download(
+                tickers=symbol, 
+                period=period, 
+                interval=interval,
+                progress=False
+            )
+            
+            if not stock_data.empty:
+                # cache the results
+                stock_cache[cache_key] = stock_data
+                return stock_data
+                
+            print(f"Attempt {attempt+1}: Empty data received for {symbol}. Retrying...")
+            # exponential backoff to let yfinance retrieve the data 
+            time.sleep(backoff_factor * (2 ** attempt))
+                
+        except Exception as e:
+            print(f"Attempt {attempt+1} failed for {symbol}: {str(e)}")
+            if attempt == max_retries - 1:  # if this was the last attempt
+                raise
+            time.sleep(backoff_factor * (2 ** attempt))
+    
+    return None
+
+def process_stock_data(stock_data, interval):
+    """Process the downloaded stock data into the desired format """
+    if stock_data is None or stock_data.empty:
+        return None
+    
+    result = {}
+    
+    if interval == '1d':
+        time_series_key = "Time Series (Daily)"
+    else:
+        time_series_key = f"Time Series ({interval})"
+    
+    result[time_series_key] = {}
+    
+    for index, row in stock_data.iterrows():
+        date_str = index.strftime('%Y-%m-%d %H:%M:%S')
+
+        open_val = extract_float_from_dictionary(str(row.get('Open', 0)))
+        high_val = extract_float_from_dictionary(str(row.get('High', 0)))
+        low_val = extract_float_from_dictionary(str(row.get('Low', 0)))
+        close_val = extract_float_from_dictionary(str(row.get('Close', 0)))
+        volume_val = extract_float_from_dictionary(str(row.get('Volume', 0)))
+        
+        # Handle the none value for the jsonify to resolve front end errors
+        data_point = {
+                "1. open": None if open_val is None else open_val,
+                "2. high": None if high_val is None else high_val,
+                "3. low": None if low_val is None else low_val,
+                "4. close": None if close_val is None else close_val,
+                "5. volume": None if volume_val is None else volume_val
+            }
+        
+        result[time_series_key][date_str] = data_point
+    
+    return result
+
+# Create threads to handle concurrent requests. 
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
 
 @app.route("/stock/<symbol>", methods=["GET"])
 def get_stock_price(symbol):
@@ -44,65 +143,32 @@ def get_stock_price(symbol):
     period = request.args.get('period', '1mo')
     
     try:
-        print(f"Attempting to download data for {symbol} with interval={interval}, period={period}")
+        print(f"Processing request for {symbol} with interval={interval}, period={period}")
         
-        # adding a retry mechanism - sometimes(almost always if there is batch) yfinance needs a second attempt
-        max_retries = 2
-        for attempt in range(max_retries):
-            try:
-                stock_data = yfinance.download(
-                    tickers=symbol, 
-                    period=period, 
-                    interval=interval,
-                    progress=False  
-                )
-                
-                if not stock_data.empty:
-                    break
-                    
-                print(f"Attempt {attempt+1}: Empty data received for {symbol}. Retrying...")
-                time.sleep(1)  # wait a second before retrying
-                
-            except Exception as e:
-                print(f"Attempt {attempt+1} failed: {str(e)}")
-                if attempt == max_retries - 1:  # if this was the last attempt
-                    raise
-                time.sleep(1)  # wait before retry
+        # Submit task to thread pool
+        future = executor.submit(fetch_stock_data, symbol, interval, period)
         
-        # handle empty dataframe
-        if stock_data.empty:
+        # Set a timeout to prevent hanging requests
+        try:
+            stock_data = future.result(timeout=5)  # 5 second timeout
+        except concurrent.futures.TimeoutError:
+            return jsonify({
+                "error": f"Request timeout for {symbol}. Server is experiencing high load."
+            }), 503
+        
+        if stock_data is None or stock_data.empty:
             return jsonify({
                 "error": f"No data available for {symbol} with interval={interval}, period={period}"
             }), 404
-            
         
-        result = {}
+        # Process the data in the thread pool to avoid blocking
+        process_future = executor.submit(process_stock_data, stock_data, interval)
+        result = process_future.result(timeout=3)  # 3 second timeout
         
-        
-        if interval == '1d':
-            time_series_key = "Time Series (Daily)"
-        elif interval in ['1m', '5m', '15m', '30m', '60m']:
-            time_series_key = "Time Series (5min)"
-        else:
-            time_series_key = f"Time Series ({interval})"
-        
-        
-        result[time_series_key] = {}
-        
-        for index, row in stock_data.iterrows():
-            
-            date_str = index.strftime('%Y-%m-%d %H:%M:%S')
-            
-            
-            data_point = {
-                "1. open": str(row.get('Open', 0)),
-                "2. high": str(row.get('High', 0)),
-                "3. low": str(row.get('Low', 0)),
-                "4. close": str(row.get('Close', 0)),
-                "5. volume": str(row.get('Volume', 0))
-            }
-            
-            result[time_series_key][date_str] = data_point
+        if result is None:
+            return jsonify({
+                "error": f"Error processing data for {symbol}"
+            }), 500
             
         return jsonify(result), 200
         
@@ -139,7 +205,6 @@ def register_user():
 
 @app.route("/login", methods=["POST"])
 def login_user():
-     
     db_gen = get_db()
     db_session = next(db_gen)
     try:
@@ -214,6 +279,7 @@ def get_stock_symbols():
     else:
         return jsonify({"error": "Could not retrieve stock symbols"}), 500 
 
+
 @app.route("/users/<int:user_id>/favorite_stocks", methods=["PUT"])
 def update_user_favorite_stocks(user_id: int):
      
@@ -243,12 +309,4 @@ def update_user_favorite_stocks(user_id: int):
         return jsonify({"message": "Failed to update favorite stocks", "error": str(e)}), 500
 
 if __name__ == "__main__":
-
-    """
-    # Threading for polling
-    import threading
-    polling_thread = threading.Thread(target=main_polling_loop)
-    polling_thread.daemon = True
-    polling_thread.start()
-    """
     app.run(debug=True)

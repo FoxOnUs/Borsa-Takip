@@ -1,10 +1,13 @@
+/* eslint-disable no-console */
 import { useState } from "react";
 import { Link } from "@heroui/link";
 import { Input } from "@heroui/input";
 import { button as buttonStyles, input as inputStyles } from "@heroui/theme";
+import { useRouter } from 'next/router';
+
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
-import { useRouter } from 'next/router';
+
 
 export default function SignInPage() {
   const [email, enterEmail] = useState("");
@@ -34,6 +37,7 @@ export default function SignInPage() {
 
       if (response.ok) {
         const responseData = await response.json();
+
         console.log("Registration successful!");
 
         localStorage.setItem('userId', responseData.user_id.toString());
@@ -47,11 +51,13 @@ export default function SignInPage() {
       }
       else if (response.status === 400) {
         const errorData = await response.json();
+
         setLoginError(errorData.message || "Login failed. Please check your email/password.");
         console.error("Login failed: Bad Request", errorData);
       }
       else {
         const errorData = await response.json();
+
         console.error("Login failed:", response.status, errorData);
         setLoginError("Login failed. Please try again later.");
       }
@@ -71,8 +77,8 @@ export default function SignInPage() {
         </div>
 
         <form
-          onSubmit={handleSubmit}
           className="flex flex-col w-full max-w-sm gap-4"
+          onSubmit={handleSubmit}
         >
           {loginError && (
             <div className="text-red-500 mb-2">{loginError}</div>
@@ -96,13 +102,13 @@ export default function SignInPage() {
           </div>
 
           <button
-            type="submit"
             className={buttonStyles({
+              className: "w-full", // Make button full width
               color: "primary",
               radius: "full",
               variant: "shadow",
-              className: "w-full", // Make button full width
             })}
+            type="submit"
           >
             Sign in
           </button>
@@ -110,7 +116,7 @@ export default function SignInPage() {
 
         <p className="text-sm text-gray-500 dark:text-gray-400">
           Don&apos;t have an account?
-          <Link href="/register" className="ml-1 text-primary-500">
+          <Link className="ml-1 text-primary-500" href="/register">
             Sign up
           </Link>
         </p>

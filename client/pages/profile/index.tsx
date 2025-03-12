@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { Input } from "@heroui/input";
+import { useRouter } from 'next/router';
 import { button as buttonStyles } from "@heroui/theme";
+
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
-import { useRouter } from 'next/router';
-import { color } from "framer-motion";
 
 interface FavoriteStock {
     name: string;

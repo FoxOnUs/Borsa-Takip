@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Input } from "@heroui/input";
 import { button as buttonStyles } from "@heroui/theme";
+import { useRouter } from "next/router";
 
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
-import { useRouter } from "next/router";
 
 export default function Register() {
     const [email, setEmail] = useState("");
