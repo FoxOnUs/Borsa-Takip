@@ -2,6 +2,7 @@
 
 import sys
 import os
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
@@ -12,8 +13,6 @@ from db.database import get_db, create_database
 from services import crud
 import yfinance
 from cachetools import TTLCache
-import asyncio
-import functools
 import concurrent.futures
 
 #create_database() # 1 time run

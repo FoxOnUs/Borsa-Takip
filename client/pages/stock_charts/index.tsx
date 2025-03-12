@@ -25,7 +25,7 @@ interface StockListItem {
 }
 
 const STOCK_DATA_CACHE_KEY = 'stockDataCache';
-const CACHE_EXPIRY_TIME_MS = 1 * 20 * 1000;
+const CACHE_EXPIRY_TIME_MS = 1 * 30 * 1000; // 30 seconds
 
 const StockListPage: React.FC = () => {
     const [stockSymbols, setStockSymbols] = useState<string[]>([]);
