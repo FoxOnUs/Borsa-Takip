@@ -9,13 +9,14 @@ sys.path.insert(0, PROJECT_ROOT)
 from flask import Flask, json, request, jsonify 
 from flask_cors import CORS
 from sqlalchemy.orm import Session
-from db.database import get_db, create_database
+from db.database import get_db, create_database, run_migrations
 from services import crud
 import yfinance
 from cachetools import TTLCache
 import concurrent.futures
 
 #create_database() # 1 time run
+#run_migrations() # run as much as needed
 
 app = Flask(__name__)
 CORS(app, origins=[os.environ.get("FRONT_ORIGINS")])
@@ -184,6 +185,9 @@ def get_stock_price(symbol):
     
 @app.route("/register", methods=["POST"])
 def register_user():
+    """
+    API endpoint to register a new user.
+    """
     db_gen = get_db()
     db_session = next(db_gen)
     try:
@@ -204,6 +208,9 @@ def register_user():
 
 @app.route("/login", methods=["POST"])
 def login_user():
+    """
+    API endpoint for login.
+    """
     db_gen = get_db()
     db_session = next(db_gen)
     try:
@@ -228,7 +235,9 @@ def login_user():
 
 @app.route("/users/<int:user_id>/nickname", methods=["PUT"])
 def update_user_nickname(user_id: int):
-     
+    """
+    API endpoint to update user nickname.
+    """ 
     db_gen = get_db()
     db_session = next(db_gen)
     try:
@@ -250,7 +259,9 @@ def update_user_nickname(user_id: int):
 
 @app.route("/users/<int:user_id>/password", methods=["PUT"])
 def update_user_password(user_id: int):
-     
+    """
+    API endpoint to update user password.
+    """
     db_gen = get_db()
     db_session = next(db_gen)
     try:
@@ -272,6 +283,9 @@ def update_user_password(user_id: int):
 
 @app.route('/api/stock_symbols', methods=['GET'])
 def get_stock_symbols():
+    """
+    API endpoint to get all the stock symbols.
+    """
     stock_symbols = read_stock_list_from_file(SERVICE_STOCK_LIST_FILE)
     if stock_symbols:
         return jsonify(stock_symbols) 
@@ -279,33 +293,106 @@ def get_stock_symbols():
         return jsonify({"error": "Could not retrieve stock symbols"}), 500 
 
 
-@app.route("/users/<int:user_id>/favorite_stocks", methods=["PUT"])
-def update_user_favorite_stocks(user_id: int):
-     
+@app.route("/users/<int:user_id>/favorite_stocks", methods=["POST"])
+def add_user_favorite_stock(user_id: int):
+    """
+    API endpoint to add a new favorite stock to a user.
+    Expected request body (JSON): {"stock_name": "AAPL", "stock_double": 170.50} (stock_double is optional)
+    """
     db_gen = get_db()
     db_session = next(db_gen)
     try:
         data = request.get_json()
-        favorite_stocks_data = data.get("favorite_stocks") 
+        stock_name = data.get("stock_name")
+        stock_double = data.get("stock_double")
+
+        if not stock_name:
+            return jsonify({"message": "Stock name is required"}), 400
+
+        favorite_stock = crud.add_favorite_stock_to_user(db_session, user_id=user_id, stock_name=stock_name, stock_double=stock_double)
+        next(db_gen, None)
+        if favorite_stock:
+            return jsonify({
+                "message": "Favorite stock added successfully",
+                "favorite_stock": {
+                    "name": favorite_stock.stock_name,
+                    "double": favorite_stock.stock_double
+                }
+            }), 201 # 201 Created for successful POST requests that create a new resource
+        else:
+            return jsonify({"message": "User not found"}), 404
+    except ValueError as ve:
+        next(db_gen, None)
+        return jsonify({"message": "Invalid favorite stock data", "error": str(ve)}), 400
+    except Exception as e:
+        next(db_gen, None)
+        return jsonify({"message": "Failed to add favorite stock", "error": str(e)}), 500
+
+@app.route("/users/<int:user_id>/favorite_stocks/<string:stock_name>", methods=["DELETE"])
+def delete_user_favorite_stock(user_id: int, stock_name: str):
+    """
+    API endpoint to delete a specific favorite stock from a user by stock name.
+    """
+    db_gen = get_db()
+    db_session = next(db_gen)
+    try:
+        deleted = crud.remove_favorite_stock_from_user(db_session, user_id=user_id, stock_name=stock_name)
+        next(db_gen, None)
+        if deleted:
+            return jsonify({"message": f"Favorite stock '{stock_name}' removed successfully"}), 200
+        else:
+            return jsonify({"message": "Favorite stock not found for this user"}), 404
+    except Exception as e:
+        next(db_gen, None)
+        return jsonify({"message": "Failed to remove favorite stock", "error": str(e)}), 500
+
+@app.route("/users/<int:user_id>/favorite_stocks", methods=["GET"])
+def get_user_favorite_stocks_api(user_id: int):
+    """
+    API endpoint to get all favorite stocks for a user.
+    """
+    db_gen = get_db()
+    db_session = next(db_gen)
+    try:
+        favorite_stocks = crud.get_user_favorite_stocks(db_session, user_id=user_id)
+        next(db_gen, None)
+        return jsonify({
+            "favorite_stocks": [{"name": fs.stock_name, "double": fs.stock_double} for fs in favorite_stocks]
+        }), 200
+    except Exception as e:
+        next(db_gen, None)
+        return jsonify({"message": "Failed to retrieve favorite stocks", "error": str(e)}), 500
+
+@app.route("/users/<int:user_id>/favorite_stocks", methods=["PUT"])
+def replace_user_favorite_stocks_api(user_id: int):
+    """
+    API endpoint to replace all favorite stocks for a user.
+    Expected request body (JSON): {"favorite_stocks": [["AAPL", 170.50], ["GOOG", 2700.0]]}
+    """
+    db_gen = get_db()
+    db_session = next(db_gen)
+    try:
+        data = request.get_json()
+        favorite_stocks_data = data.get("favorite_stocks")
 
         if not isinstance(favorite_stocks_data, list):
             return jsonify({"message": "Favorite stocks must be a list of [name, double] pairs"}), 400
 
-        updated_user = crud.update_favorite_stocks(db_session, user_id=user_id, new_favorite_stocks=favorite_stocks_data)
+        updated_user = crud.replace_user_favorite_stocks(db_session, user_id=user_id, new_favorite_stocks=favorite_stocks_data)
         next(db_gen, None)
         if updated_user:
             return jsonify({
-                "message": "Favorite stocks updated successfully",
-                "favorite_stocks": [{"name": n, "double": d} for n, d in zip(updated_user.favorite_stock_names, updated_user.favorite_stock_doubles)]
+                "message": "Favorite stocks replaced successfully",
+                "favorite_stocks": [{"name": fs.stock_name, "double": fs.stock_double} for fs in updated_user.favorites] # Use .favorites relationship
             }), 200
         else:
             return jsonify({"message": "User not found"}), 404
-    except ValueError as ve: 
+    except ValueError as ve:
         next(db_gen, None)
         return jsonify({"message": "Invalid favorite stocks data", "error": str(ve)}), 400
     except Exception as e:
         next(db_gen, None)
-        return jsonify({"message": "Failed to update favorite stocks", "error": str(e)}), 500
+        return jsonify({"message": "Failed to replace favorite stocks", "error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)

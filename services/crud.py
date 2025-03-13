@@ -31,27 +31,56 @@ def update_password(db: Session, user_id: int, new_password: str):
         return user
     return None
 
-def update_favorite_stocks(db: Session, user_id: int, new_favorite_stocks: list):
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if user:
-        stock_names = []
-        stock_doubles = []
-        if len(new_favorite_stocks) > 5:
-            raise ValueError("Cannot have more than 5 favorite stocks.")
-        for stock_pair in new_favorite_stocks:
-            if not isinstance(stock_pair, (list, tuple)) or len(stock_pair) != 2:
-                raise ValueError("Each favorite stock must be a pair of [name, double].")
-            stock_name, stock_double = stock_pair
-            if len(stock_name) > 5:
-                raise ValueError("Stock names cannot be longer than 5 characters.")
-            if not isinstance(stock_double, (int, float)):
-                raise ValueError("Stock double value must be a number.")
-            stock_names.append(stock_name)
-            stock_doubles.append(float(stock_double))
+# ----------------------- NEW FAVORITE STOCK CRUD OPERATIONS -----------------------
 
-        user.favorite_stock_names = stock_names
-        user.favorite_stock_doubles = stock_doubles
+def add_favorite_stock_to_user(db: Session, user_id: int, stock_name: str, stock_double: float = None):
+    """
+    Adds a favorite stock to a user.
+
+    Raises ValueError if stock_name is invalid or duplicate for the user.
+    """
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        return None 
+
+    try:
+        favorite_stock = models.FavoriteStock(user_id=user_id, stock_name=stock_name, stock_double=stock_double)
+        db.add(favorite_stock)
         db.commit()
-        db.refresh(user)
-        return user
-    return None
+        db.refresh(favorite_stock)
+        return favorite_stock
+    except ValueError as ve:
+        db.rollback() 
+        raise ve # re-raise the validation error from the model
+    except Exception as e: # Catch other potential DB errors (like unique constraint violation)
+        db.rollback()
+        # Check if it's a unique constraint violation specifically
+        if "unique_user_stock" in str(e):
+            raise ValueError(f"Stock '{stock_name}' is already in user's favorites.")
+        else:
+            raise Exception(f"Error adding favorite stock: {e}") 
+
+
+def remove_favorite_stock_from_user(db: Session, user_id: int, stock_name: str):
+    """
+    Removes a favorite stock from a user by stock name.
+    Returns True if removed, False if not found.
+    """
+    favorite_stock = db.query(models.FavoriteStock).filter(
+        models.FavoriteStock.user_id == user_id,
+        models.FavoriteStock.stock_name == stock_name
+    ).first()
+    if favorite_stock:
+        db.delete(favorite_stock)
+        db.commit()
+        return True
+    return False
+
+def get_user_favorite_stocks(db: Session, user_id: int):
+    return db.query(models.FavoriteStock).filter(models.FavoriteStock.user_id == user_id).all()
+
+def get_user_favorite_stock_by_name(db: Session, user_id: int, stock_name: str):
+    return db.query(models.FavoriteStock).filter(
+        models.FavoriteStock.user_id == user_id,
+        models.FavoriteStock.stock_name == stock_name
+    ).first()

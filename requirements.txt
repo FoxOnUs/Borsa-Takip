@@ -6,3 +6,4 @@ bcrypt
 dotenv
 yfinance
 cachetools
+alembic

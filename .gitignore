@@ -2,3 +2,5 @@
 venv/
 .editorconfig
 .env
+db/migrations
+db/alembic.ini

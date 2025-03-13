@@ -1,4 +1,5 @@
 # db/database.py
+import subprocess
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -23,6 +24,15 @@ def get_db():
 
 def create_database(): # Function to create the database and tables
     Base.metadata.create_all(bind=engine)
+
+def run_migrations():
+    print("Running database migrations...")
+    try:
+        subprocess.check_call(['alembic', 'upgrade', 'head'], cwd='db') # Run alembic upgrade
+        print(f"Database migrations completed successfully using URL: {DATABASE_URL}")
+    except subprocess.CalledProcessError as e:
+        print("Error running database migrations:")
+        print(e)
 
 if __name__ == "__main__": # Example of how to run this to create tables
     create_database()
